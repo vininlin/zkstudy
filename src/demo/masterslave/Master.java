@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.Random;
 
 import org.apache.zookeeper.AsyncCallback.DataCallback;
+import org.apache.zookeeper.AsyncCallback.StatCallback;
 import org.apache.zookeeper.AsyncCallback.StringCallback;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -14,6 +15,7 @@ import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.KeeperException.NoNodeException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.Watcher.Event.EventType;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
@@ -33,6 +35,7 @@ public class Master implements Watcher {
     private static final Logger LOG = LoggerFactory.getLogger(Master.class);
     ZooKeeper zk;
     String hostPort;
+    MasterStates state;
     
     Master(String hostPort){
         this.hostPort = hostPort;
@@ -48,24 +51,78 @@ public class Master implements Watcher {
     
     String serverId = Integer.toHexString(new Random().nextInt());
     static boolean isLeader = false;
+    
     StringCallback masterCreateCallback = new StringCallback(){
 
         @Override
         public void processResult(int rc, String path, Object ctx, String name) {
+            System.out.println("process master create result...");
             switch(Code.get(rc)){
                 case CONNECTIONLOSS : 
+                    System.out.println("master create CONNECTIONLOSS...");
                     checkMaster();
                     return;
                 case OK:
+                    System.out.println("master create OK...");
+                    state = MasterStates.ELECTED;
                     isLeader = true;
+                    leaderShip();
+                    break;
+                case NODEEXISTS:
+                    state = MasterStates.NOTELECTED;
+                    masterExists();
                     break;
                 default :
+                    state = MasterStates.NOTELECTED;
+                    LOG.error("Something went wrong when running for master:" + KeeperException.create(Code.get(rc),path));
                     isLeader = false;
             }
             LOG.info("I'm the " + (isLeader ? "" : "not") + "leader");
         }
         
     };
+    
+    void leaderShip(){
+        LOG.info("do leaderShip...");
+    }
+    
+    void masterExists(){
+        zk.exists("/master", masterExistsWatcher, masterExsitsCallback, null);
+    }
+    
+    Watcher masterExistsWatcher = new Watcher(){
+
+        @Override
+        public void process(WatchedEvent event) {
+            if(event.getType() == EventType.NodeDeleted){
+                assert "/master".equals(event.getPath());
+                runForMaster();
+            }
+        }
+        
+    };
+    
+    StatCallback masterExsitsCallback = new StatCallback(){
+
+        @Override
+        public void processResult(int rc, String path, Object ctx, Stat stat) {
+            switch(Code.get(rc)){
+            case CONNECTIONLOSS : 
+                masterExists();
+                break;
+            case OK:
+                if(stat == null){
+                    state = MasterStates.RUNNING;
+                    runForMaster();
+                }
+                break;
+             default:
+                 checkMaster();
+            }
+        }
+        
+    };
+    
     
     DataCallback masterCheckCallback = new DataCallback(){
 
@@ -74,8 +131,10 @@ public class Master implements Watcher {
             switch(Code.get(rc)){
             case CONNECTIONLOSS : 
                 checkMaster();
+                System.out.println("master check CONNECTIONLOSS...");
                 return;
             case NONODE:
+                System.out.println("master check NONODE...");
                 runForMaster();
                 return;
             }
@@ -121,7 +180,7 @@ public class Master implements Watcher {
         //改为异步
         zk.create("/master", serverId.getBytes(), 
                 ZooDefs.Ids.OPEN_ACL_UNSAFE, 
-                CreateMode.EPHEMERAL,
+                CreateMode.PERSISTENT,
                 masterCreateCallback, null);
     }
     
@@ -136,13 +195,15 @@ public class Master implements Watcher {
         Master master = new Master(hostPort);
         master.startZk();
         master.runForMaster();
-        if(isLeader){
+        master.bootstrap();
+        //异步不需要以下
+       /* if(isLeader){
             LOG.info("I'm the leader");
             Thread.sleep(6000);
         }else{
             LOG.info("Someone else is the leader");
-        }
-        
+        }*/
+        Thread.sleep(6000);
         master.stopZk();
     }
     

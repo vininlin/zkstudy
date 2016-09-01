@@ -4,8 +4,10 @@
 package demo.masterslave;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Random;
 
+import org.apache.zookeeper.AsyncCallback.ChildrenCallback;
 import org.apache.zookeeper.AsyncCallback.StatCallback;
 import org.apache.zookeeper.AsyncCallback.StringCallback;
 import org.apache.zookeeper.CreateMode;
@@ -13,6 +15,7 @@ import org.apache.zookeeper.KeeperException.Code;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.Watcher.Event.EventType;
 import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
@@ -99,6 +102,50 @@ public class Worker implements Watcher {
     public void setStatus(String status){
         this.status = status;
         updateStatus(status);
+    }
+    
+    Watcher workersChangeWatcher = new Watcher(){
+
+        @Override
+        public void process(WatchedEvent event) {
+            if(event.getType() == EventType.NodeChildrenChanged){
+                assert "/workers".equals(event.getPath());
+                getWorkers();
+            }
+        }
+        
+    };
+    
+    ChildrenCallback workersGetChildrenCallback = new ChildrenCallback(){
+
+        @Override
+        public void processResult(int rc, String path, Object ctx, List<String> children) {
+            switch(Code.get(rc)){
+            case CONNECTIONLOSS : 
+                getWorkerList();
+                break;
+            case OK:
+                LOG.info("Success got a list of workers:" + children.size() + " workers.");
+                reassignAndSet(children);
+                break;
+            default:
+                LOG.error("get Children failed:" + KeeperException.create(Code.get(rc),path));
+            }
+        }
+        
+    };
+    
+    void getWorkers(){
+        zk.getChildren("/workers", workersChangeWatcher, workersGetChildrenCallback, null);
+    }
+    
+    void getWorkerList(){
+        
+    }
+    
+    ChildrenCache workersCache;
+    void reassignAndSet(List<String> children){
+        
     }
     
     public static void main(String[] args) throws Exception{
