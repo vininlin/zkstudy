@@ -145,7 +145,12 @@ public class Worker implements Watcher {
     
     ChildrenCache workersCache;
     void reassignAndSet(List<String> children){
-        
+        List<String> toProcess;
+        if(workersCache == null){
+            toProcess = null;
+        }else{
+            LOG.info("removing and setting:");
+        }
     }
     
     public static void main(String[] args) throws Exception{
