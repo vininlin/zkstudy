@@ -103,55 +103,14 @@ public class Worker implements Watcher {
         this.status = status;
         updateStatus(status);
     }
-    
-    Watcher workersChangeWatcher = new Watcher(){
-
-        @Override
-        public void process(WatchedEvent event) {
-            if(event.getType() == EventType.NodeChildrenChanged){
-                assert "/workers".equals(event.getPath());
-                getWorkers();
-            }
-        }
-        
-    };
-    
-    ChildrenCallback workersGetChildrenCallback = new ChildrenCallback(){
-
-        @Override
-        public void processResult(int rc, String path, Object ctx, List<String> children) {
-            switch(Code.get(rc)){
-            case CONNECTIONLOSS : 
-                getWorkerList();
-                break;
-            case OK:
-                LOG.info("Success got a list of workers:" + children.size() + " workers.");
-                reassignAndSet(children);
-                break;
-            default:
-                LOG.error("get Children failed:" + KeeperException.create(Code.get(rc),path));
-            }
-        }
-        
-    };
-    
-    void getWorkers(){
-        zk.getChildren("/workers", workersChangeWatcher, workersGetChildrenCallback, null);
-    }
+   
     
     void getWorkerList(){
         
     }
     
     ChildrenCache workersCache;
-    void reassignAndSet(List<String> children){
-        List<String> toProcess;
-        if(workersCache == null){
-            toProcess = null;
-        }else{
-            LOG.info("removing and setting:");
-        }
-    }
+   
     
     public static void main(String[] args) throws Exception{
         String hostPort = "localhost:2181,localhost:2182,localhost:2183";
