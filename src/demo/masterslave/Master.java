@@ -4,6 +4,7 @@
 package demo.masterslave;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -25,6 +26,9 @@ import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import demo.masterslave.recover.RecoveredAssignments;
+import demo.masterslave.recover.RecoveredAssignments.RecoveryCallback;
 
 /**
  * 类/接口注释
@@ -215,7 +219,18 @@ public class Master implements Watcher {
     
     void takeLeaderShip(){
         LOG.info("Going for list of workers");
-        new RecoveredAssignments(zk).recover(new RecoverCallback(){
+        getWorkers();
+        new RecoveredAssignments(zk).recover(new RecoveryCallback(){
+
+			@Override
+			public void recoveryComplete(int rc, List<String> tasks) {
+				if(rc == RecoveryCallback.FAILED){
+					LOG.error("Recovery of assigned tasks failed.");
+				}else{
+					LOG.info( "Assigning recovered tasks" );
+					getTasks();
+				}
+			}
             
         });
     }
@@ -418,22 +433,148 @@ public class Master implements Watcher {
     ******************************************************
     ******************************************************
     */
-   
+    void getTasks(){
+    	zk.getChildren("/tasks", taskChangeWatcher,taskGetChildrenCallback,null);
+    }
+    
+    Watcher taskChangeWatcher = new Watcher(){
+
+		@Override
+		public void process(WatchedEvent event) {
+			if(event.getType() == EventType.NodeChildrenChanged){
+				assert "/tasks".equals(event.getPath());
+				getTasks();
+			}
+		}
+    	
+    };
+    
+    ChildrenCallback taskGetChildrenCallback = new ChildrenCallback(){
+
+		@Override
+		public void processResult(int rc, String path, Object ctx,
+				List<String> children) {
+			switch(Code.get(rc)){
+	        case CONNECTIONLOSS : 
+	            getTasks();
+	            break;
+	        case OK:
+	            List<String> toProcess;
+	            if(tasksCache == null){
+	            	tasksCache = new ChildrenCache(children);
+	            	toProcess = children;
+	            }else{
+	            	toProcess = tasksCache.addedAndSet(children);
+	            }
+	            if(toProcess != null){
+	            	assignTasks(toProcess);
+	            }
+	            break;
+	        default:
+	            LOG.error("Get children failed:",KeeperException.create(Code.get(rc)));
+	        }
+			
+		}
+    	
+    };
+    
+    void assignTasks(List<String> tasks){
+    	for(String task : tasks){
+    		getTaskData(task);
+    	}
+    }
+    
+    void getTaskData(String task){
+    	zk.getData("/tasks/" + task, false,taskDataCallback , task);
+    }
+    
+    DataCallback taskDataCallback = new DataCallback(){
+
+		@Override
+		public void processResult(int rc, String path, Object ctx, byte[] data,
+				Stat stat) {
+			switch(Code.get(rc)){
+	        case CONNECTIONLOSS : 
+	        	getTaskData((String)ctx);
+	            break;
+	        case OK:
+	            List<String> list = workersCache.getList();
+	            String designateWorker = list.get(random.nextInt(list.size()));
+	            String assignmentPath = "/assign/" + designateWorker + "/" + (String)ctx;
+	            LOG.info("Assignment path: " + assignmentPath);
+	            createAssignment(assignmentPath,data);
+	            break;
+	        default:
+	            LOG.error("Error when trying to get task data.",KeeperException.create(Code.get(rc)));
+	        }
+		}
+    	
+    };
+    
+    void createAssignment(String path,byte[] data){
+    	zk.create(path, data, Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT, assignTaskCallback, data);
+    }
+    
+    StringCallback assignTaskCallback = new StringCallback(){
+
+		@Override
+		public void processResult(int rc, String path, Object ctx, String name) {
+			switch(Code.get(rc)){
+	        case CONNECTIONLOSS : 
+	        	createAssignment(path,(byte[])ctx);
+	            break;
+	        case OK:
+	            LOG.info("Task assign correctly.");
+	            deleteTask(name.substring(name.lastIndexOf("/") + 1));
+	            break;
+	        case NODEEXISTS:
+	        	LOG.warn("Task already assigned");
+	        	break;
+	        default:
+	            LOG.error("Error when trying to assign task.",KeeperException.create(Code.get(rc)));
+	        }
+		}
+    	
+    };
+    
+    void deleteTask(String name){
+    	zk.delete("/tasks/" + name, -1, taskDeleteCallback, null);
+    }
+    
+    VoidCallback taskDeleteCallback = new VoidCallback(){
+
+		@Override
+		public void processResult(int rc, String path, Object ctx) {
+			switch(Code.get(rc)){
+	        case CONNECTIONLOSS : 
+	        	deleteTask(path);
+	            break;
+	        case OK:
+	        	LOG.info("Successfully deleted " + path);
+	            break;
+	        case NONODE:
+	        	LOG.info("Task has been deleted already");
+	        	break;
+	        default:
+	            LOG.error("Something went wrong here, ",KeeperException.create(Code.get(rc)));
+	        }
+		}
+    	
+    };
     
     public static void main(String[] args) throws Exception{
         String hostPort = "localhost:2181,localhost:2182,localhost:2183";
         Master master = new Master(hostPort);
         master.startZk();
-        master.runForMaster();
+        while(!master.isConnected()){
+        	Thread.sleep(100);
+        }
+        
         master.bootstrap();
-        //异步不需要以下
-       /* if(isLeader){
-            LOG.info("I'm the leader");
-            Thread.sleep(6000);
-        }else{
-            LOG.info("Someone else is the leader");
-        }*/
-        Thread.sleep(6000);
+        master.runForMaster();
+        while(!master.isExpired()){
+        	Thread.sleep(1000);
+        }
         master.stopZk();
     }
     

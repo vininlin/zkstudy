@@ -29,7 +29,7 @@ public class ChildrenCache {
         return this.children;
     }
     
-    List<String> andAndSet(List<String> newChildren){
+    List<String> addedAndSet(List<String> newChildren){
         ArrayList<String> diff = null;
         if(this.children == null){
             diff = new ArrayList<String>(newChildren);
