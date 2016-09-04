@@ -225,7 +225,7 @@ public class RecoveredAssignments {
 		public void processResult(int rc, String path, Object ctx, String name) {
 			switch(Code.get(rc)){
             case CONNECTIONLOSS : 
-            	recreateTask(new RecreateTaskCtx(path,(String)ctx,data));
+            	recreateTask((RecreateTaskCtx)ctx);
                 break;
             case OK:
             	deleteAssignment(((RecreateTaskCtx) ctx).path);
@@ -275,28 +275,12 @@ public class RecoveredAssignments {
 				List<String> children) {
 			switch(Code.get(rc)){
             case CONNECTIONLOSS : 
-            	getWorkerAssignments(path);
+            	getStatuses();
                 break;
             case OK:
-            	String worker = path.replace("/assign/", "");
-            	if(activeWorkers.contains(worker)){
-            		assignments.addAll(children);
-            	}else{
-            		for(String task : children){
-            			if(tasks.contains(task)){
-            				tasks.add(task);
-            				getDataReassign(path,task);
-            			}else{
-            				deleteAssignment(path + "/" + task);
-            			}
-            			deleteAssignment(path);
-            		}
-            	}
-            	assignedWorkers.remove(worker);
-            	if(assignedWorkers.size() == 0){
-            		LOG.info("Getting statuses for recovery");
-            		getStatuses();
-            	}
+            	LOG.info("Processing assignments for recovery");
+            	status = children;
+            	processAssignments();
                 break;
             case NONODE:
             	LOG.info( "No such znode exists: " + path );
@@ -308,4 +292,25 @@ public class RecoveredAssignments {
 		}
 		
 	};
+	
+	private void processAssignments(){
+		LOG.info("Size of tasks: " + tasks.size());
+		for(String s : assignments){
+			LOG.info("Assignment:" + s);
+			deleteAssignment(s);
+			tasks.remove(s);
+		}
+		
+		LOG.info("Size of tasks after assignment filtering: " + tasks.size());
+		
+		for(String s : status){
+			LOG.info( "Checking task: {} ", s );
+			deleteAssignment("/task/" + s);
+			tasks.remove(s);
+		}
+		
+		LOG.info("Size of tasks after status filtering: " + tasks.size());
+		
+		cb.recoveryComplete(RecoveryCallback.OK, tasks);
+	}
 }
