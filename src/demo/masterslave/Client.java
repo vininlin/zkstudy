@@ -203,6 +203,7 @@ public class Client implements Watcher,Closeable{
         }
         TaskObject task1 = new TaskObject();
         TaskObject task2 = new TaskObject();
+        
         c.submitTask("sample task",task1);
         c.submitTask("Another sample task", task2);
         
